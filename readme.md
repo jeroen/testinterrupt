@@ -1,22 +1,37 @@
 # Interruption
 
-This packages tests if C code in R can properly catch a user interruption in order to clean up resources before exiting.
+This package tests if C code in R packages properly catch a user interruption in order to clean up resources before exiting.
+
+Our code uses [Simon's trick](https://stat.ethz.ch/pipermail/r-devel/2011-April/060702.html) to detect an interruption without jumping:
+
+```c
+void check_interrupt_fn(void *dummy) {
+  R_CheckUserInterrupt();
+}
+
+int pending_interrupt() {
+  return !(R_ToplevelExec(check_interrupt_fn, NULL));
+}
+```
+
+Unfortunately this "hack" is the only method we have to gracefully deal with interrupts and widely used in R packages.
 
 ## What should happen
 
-The example function loops in C until the user interrupts (by pressing `ESC` or `CTRL+C`)
+Our C function [C_wait_for_user](src/wait.c#L15-L23) loops until the user interrupts (by pressing `ESC` or `CTRL+C`)
 
 ```r
 library(testinterrupt)
 wait_for_user(progress = TRUE)
+1 Mississippi...
 ```
 
-When the user interrupts, the code should [break from the loop](src/wait.c#L19-L20) and execute to the cleanup code before returning:
+When the user interrupts, the code should [break from the loop](src/wait.c#L19-L20) and execute some cleanup code before returning:
 
 ```r
 > wait_for_user()
 31 Mississippi...
-Done! Cleaning up!
+User Interruption! Cleaning up!
 [1] TRUE
 ```
 
@@ -24,27 +39,27 @@ This works as expected on Linux and MacOS.
 
 ## The problem
 
-In RStudio on Windows the interruption does not get caught in C. Instead it seems to get intercepted by the IDE and sends the user straight back to the interpreter. This makes it impossible to write C code that properly free's and clean's resources (close connections, free handles, etc).
+In __RStudio on Windows__ the interruption does not get caught by our C code. Instead it seems to get intercepted earlier by the IDE which sends the user straight back to the console, without running the cleanup code.
 
 ```r
 > wait_for_user()
-31 Mississippi
+31 Mississippi...
 >
 ```
 
-The problem does not appear in RGUI on Windows, but it is unclear to me if this is a bug in rstudio, or in how R is embedded on Windows. 
+This makes it impossible to write C code that properly free's and clean's resources (close connections, free handles, etc). I think it may also cause jumping over C++ destructors. The problem does not appear in RGUI on Windows, only in RStudio.
 
-Interestingly the problem only appears if we use `Rprintf()` in the C code. If we disable the progress printing, it does execute the cleanup part:
+Interestingly the problem only appears if we call `Rprintf()` in our C code. When we disable the progress printing, the cleanup lines do get executed properly:
 
 
 ```r
-> wait_for_user(F)
+> wait_for_user(FALSE)
 
-Done! Cleaning up!
+User Interruption! Cleaning up!
 [1] TRUE
 ```
 
-This may suggest that the user interruption gets caught while executing the IDE's `ptr_R_WriteConsoleEx` callback function which is [RWriteConsoleEx ](https://github.com/rstudio/rstudio/blob/master/src/cpp/r/session/RSession.cpp#L835-L855) in the case of rstudio. However it is unclear why this would only happen on Windows.
+This may suggest that the user interruption gets caught while executing the IDE's `ptr_R_WriteConsoleEx` callback function (which is [RWriteConsoleEx ](https://github.com/rstudio/rstudio/blob/master/src/cpp/r/session/RSession.cpp#L835-L855) in the case of rstudio). However it is unclear why this would only happen on Windows.
 
 
 ## Real world example

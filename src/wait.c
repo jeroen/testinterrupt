@@ -14,11 +14,11 @@ SEXP C_wait_for_user(SEXP progress){
   static int count = 0;
   for(;;){
     if(asLogical(progress))
-      Rprintf("\r%d Mississippi", count++);
+      Rprintf("\r%d Mississippi...", count++);
     usleep(200000);
     if(pending_interrupt())
       break;
   }
-  Rprintf("\nDone! Cleaning up!\n");
+  Rprintf("User Interruption! Cleaning up!\n");
   return ScalarLogical(TRUE);
 }
